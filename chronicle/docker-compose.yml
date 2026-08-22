@@ -1,0 +1,55 @@
+# Explicit project name — without this, Compose defaults to the directory's
+# basename ("chronicle"), which every session folder in this course shares.
+# Two sessions' stacks on the same machine would otherwise collide on
+# container and network names the moment both have been started once.
+name: chronicle-session14-1
+
+# Session 14.1: ported from session9/chronicle's docker-compose.yml,
+# updated for the semantic cache (see Dockerfile). Verified with
+# `docker-compose up -d --build` — see README §2d for what was actually
+# checked. It does NOT run the 5 MCP servers as containers — same as
+# every prior session — so the api container's MCPClientPool will
+# silently fall back to the calibration dataset rather than hitting live
+# MCP data. `./run_dev.sh` is the only path in this repo confirmed
+# working end-to-end with live MCP data.
+#
+# ui's host port is 8080, not nginx's usual 3000 — 3000 was already
+# bound by an unrelated process on the machine this was verified on.
+# Change it back to "3000:80" if that's free on yours and you'd rather
+# match the original session9 layout.
+services:
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"   # Phoenix UI + OTLP/HTTP collector
+      - "4317:4317"   # OTLP/gRPC collector
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:6006/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # api runs inside the compose network, so it reaches Phoenix by
+      # service name, not localhost — otel_setup.py reads this override.
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:6006/v1/traces
+    depends_on:
+      phoenix:
+        condition: service_healthy
+
+  ui:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+    depends_on:
+      - api
